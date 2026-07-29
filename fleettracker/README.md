@@ -59,12 +59,6 @@ Pattern) and §4.3.1 (Delegating Thread Safety).
   or, if the map's structure ever changes concurrently, `ConcurrentModificationException` /
   silently corrupted `HashMap` internals.
 
-> **Note for the report:** `Simulation.java` tries to *catch* a torn read live, by having every
-> write set `x == y` and flagging any read where they differ. Whether it catches one on a given
-> run is **timing-dependent** — that's the point. A race that doesn't show up in 5 test runs is
-> not a race that's fixed; it's a bug waiting for the wrong moment (heavier load, a slower
-> machine, a different JIT decision). This is exactly why JCIP insists on *designing in*
-> thread safety rather than testing for its absence.
 
 ## 4. The GUI demo (`FleetTrackerGUI.java`)
 
@@ -128,44 +122,5 @@ matter of luck.
 > it, which is exactly the confusing nested-folder problem from before. Compiling from one level
 > up avoids that entirely.
 
-## 6. Suggestions for presenting this to the lecturer
 
-1. **Live demo, not just code.**
-   - Run `FleetTrackerGUI.java` first — it's the most immediately understandable: "here's a
-     shared map of vehicle positions being read and written by different threads at once."
-   - Then run `Simulation.java` in the console 3–4 times. Point out that the safe versions are
-     *always* correct, while the unsafe one's correctness depends on timing (rerun a few times —
-     if a torn read isn't caught, say so honestly and explain *why that's still evidence of a
-     design flaw*, not proof of safety).
-2. **Explain WHY each is safe**, not just that it is:
-   - Monitor pattern → single lock + no internal state ever published.
-   - Delegating → composed from independently thread-safe pieces, with no invariant that spans
-     across them.
-3. **Trade-off table** (good as a slide):
-
-   | | Monitor Pattern | Delegating |
-   |---|---|---|
-   | Snapshot consistency | Yes (frozen copy) | Per-vehicle only |
-   | Copy cost per read | O(n) | O(1) |
-   | Freshness of data | Stale after copy | Always live |
-   | Code you must write/maintain | Locking logic | Almost none |
-
-4. **Possible extensions** (good for extra marks, not required):
-   - Replace the tight update loop with a `ScheduledExecutorService` firing simulated GPS
-     updates every N ms, closer to a real system.
-   - Add a JMH or simple stopwatch benchmark comparing throughput of Monitor vs Delegating under
-     heavy load — this is literally the "could become a performance issue" caveat Goetz raises
-     in the text (footnote 4).
-   - Write JUnit tests using `CountDownLatch`/`CyclicBarrier` to deterministically force
-     interleavings and reliably reproduce the unsafe tracker's bug, instead of relying on luck.
-
-## 7. Key vocabulary to be ready to explain if asked
-
-- **Race condition** — outcome depends on the relative timing of threads.
-- **Intrinsic lock / monitor** — the lock associated with every Java object, acquired via `synchronized`.
-- **Confinement / encapsulation** — never letting a reference to mutable internal state escape.
-- **Delegation** — building a thread-safe class out of other thread-safe classes, when no
-  invariant spans more than one of them.
-- **Torn read/write** — reading or writing a multi-field value (like x, y) as two separate,
-  non-atomic operations, so an observer can see an inconsistent in-between state.
 
