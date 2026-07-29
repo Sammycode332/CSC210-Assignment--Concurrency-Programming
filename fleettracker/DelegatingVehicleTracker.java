@@ -1,4 +1,4 @@
-package fleettracker;
+package fleettracker.fleettracker;
 
 import java.util.Collections;
 import java.util.Map;

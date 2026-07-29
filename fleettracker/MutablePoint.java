@@ -1,4 +1,4 @@
-package fleettracker;
+package fleettracker.fleettracker;
 
 /**
  * JCIP Listing 4.5.

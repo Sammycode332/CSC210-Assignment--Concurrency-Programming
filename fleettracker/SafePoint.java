@@ -1,4 +1,4 @@
-package fleettracker;
+package fleettracker.fleettracker;
 
 /**
  * JCIP §4.3.1 — a mutable, thread-safe Point, guarded by its own lock.

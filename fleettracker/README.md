@@ -84,11 +84,27 @@ The console simulation proves the point numerically; the GUI makes it visible.
 
 ## 5. How to build and run
 
-Run these from inside the `fleettracker` folder.
+**Important — run these commands from the PARENT folder of `fleettracker`, not from inside it.**
 
-**Compile (Windows PowerShell — list files explicitly, wildcards don't expand for `javac`):**
+Every file declares `package fleettracker;`, and Java requires the folder you compile/run from
+to be the *root* that contains the `fleettracker` folder — not the `fleettracker` folder itself.
+So your working directory should look like this before you run anything:
+
+```
+csc210Assignment2\        <- be here
+  └── fleettracker\
+        ├── MutablePoint.java
+        ├── MonitorVehicleTracker.java
+        ├── SafePoint.java
+        ├── DelegatingVehicleTracker.java
+        ├── UnsafeVehicleTracker.java
+        ├── FleetTrackerGUI.java
+        └── Simulation.java
+```
+
+**Compile (Windows PowerShell — reference files via the `fleettracker\` path):**
 ```powershell
-javac -d out MutablePoint.java MonitorVehicleTracker.java SafePoint.java DelegatingVehicleTracker.java UnsafeVehicleTracker.java FleetTrackerGUI.java Simulation.java
+javac -d out fleettracker\MutablePoint.java fleettracker\MonitorVehicleTracker.java fleettracker\SafePoint.java fleettracker\DelegatingVehicleTracker.java fleettracker\UnsafeVehicleTracker.java fleettracker\FleetTrackerGUI.java fleettracker\Simulation.java
 ```
 
 **Run the console simulation:**
@@ -104,6 +120,13 @@ java -cp out fleettracker.FleetTrackerGUI
 Run the console simulation several times — the two safe trackers always finish cleanly with no
 exceptions and internally consistent (x, y) pairs, while the unsafe tracker's correctness is a
 matter of luck.
+
+> **Why this matters:** this isn't just a quirk — it's how Java's package system works.
+> `package fleettracker;` at the top of each file tells the compiler "I live inside a folder
+> called `fleettracker`, relative to wherever you're compiling from." If you compile from
+> *inside* `fleettracker`, the compiler expects to find *another* `fleettracker` folder inside
+> it, which is exactly the confusing nested-folder problem from before. Compiling from one level
+> up avoids that entirely.
 
 ## 6. Suggestions for presenting this to the lecturer
 
