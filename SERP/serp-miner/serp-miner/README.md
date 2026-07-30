@@ -1,137 +1,120 @@
-# SERP Feature Miner — Assignment 1, Part 1
+# Scholar Feature Miner
 
-A multithreaded Java program that queries a "search engine", mines the returned
-crime-reporting papers for distinctive **system features**, and **categorises those
-features by the number of systems having each one**, then visualises the ranking.
+A multithreaded Java program with a **search-engine-style GUI**. You type **two topics
+at once**; the app searches several academic sources **concurrently**, mines the
+returned papers for crime-reporting **system features**, ranks each feature by how many
+papers exhibit it, and shows the results across **four pages**:
 
-This is the deliverable for Assignment 1, Part 1:
+| Page | Content |
+|------|---------|
+| 1 · Papers (topic 1) | top-10 papers for topic 1 (clickable titles) |
+| 2 · Papers (topic 2) | top-10 papers for topic 2 |
+| 1 · Chart (topic 1)  | features ranked by number of papers, as a bar chart |
+| 2 · Chart (topic 2)  | same visualisation for topic 2 |
 
-> *"Design and implement a multithreaded program for returning ... the distinctive
-> features of crime-reporting papers (at least 10) of SERP and categorise the
-> features in order of the number of systems having the feature. Your implementation
-> should also include visualization of your results."*
+The point of the assignment is the concurrency, so the two searches genuinely run at the
+same time, and each search itself fans out across sources and papers.
 
-It has **zero external dependencies** — it compiles with plain `javac` and runs with
-plain `java` on any **JDK 17+** (records are used for the immutable value layer).
+No third-party libraries — just a JDK (17+). The included JSON parser means there is no
+Gson/Jackson jar to put on the classpath.
 
----
+## Run it
 
-## What it does (the pipeline)
-
-1. **Search (Stage A, parallel I/O).** Fan out a set of related queries
-   ("crime reporting system", "crowdsourced crime reporting", …) to a search backend,
-   concurrently, and merge + de-duplicate the results into one SERP.
-2. **Extract.** For each paper, detect which of **15 crime-reporting features** appear
-   in its title + abstract, using a keyword/synonym lexicon with word-boundary matching.
-3. **Aggregate + rank (Stage B, parallel CPU).** Count, across all papers, how many
-   systems exhibit each feature, and sort the features in descending order of that count.
-4. **Visualise.** Render the ranking as a console bar chart and a Swing bar chart.
-
-One paper is counted as one "system" — the stated assumption behind the counting rule.
-
-### The 15 features
-Anonymous reporting · Geolocation/GPS · Real-time alerts · Media/evidence upload ·
-Case/incident tracking · Encryption/security · Multilingual · Mobile app ·
-Police/authority integration · Analytics/dashboard · Crowdsourcing · ML/prediction ·
-Emergency/SOS · Verification/credibility · Chatbot/NLP.
-
----
-
-## Build & run
-
-```bash
-./run.sh test      # compile + run the four smoke tests
-./run.sh run       # offline demo (built-in corpus, always works) + Swing chart
-./run.sh run --no-gui
-./run.sh online    # live arXiv backend (needs internet)
-./run.sh bench     # pool-size sweep, prints the speedup curve
-
-# or manually:
-javac -d out $(find src -name '*.java')
-java  -cp out serp.app.Main --online "crime reporting system" "crime mapping"
+**Any OS with bash (macOS / Linux / Git Bash / WSL):**
+```
+./run.sh gui                       # the search-engine window
+./run.sh online "crime reporting system" "crime mapping"   # console, live sources
+./run.sh run    "crime reporting system" "crime mapping"   # console, offline corpus
+./run.sh bench                     # pool-size sweep
+./run.sh test                      # all smoke tests
 ```
 
-**Why arXiv, not Google?** Google actively blocks bots and forbids scraping, so a
-multithreaded scraper would spend its time fighting captchas instead of demonstrating
-concurrency. The arXiv API is free, keyless, returns ranked title+abstract results, and
-is meant to be queried programmatically — an honest SERP source. Swapping in
-Semantic Scholar / OpenAlex / CrossRef only means writing another `SearchClient`.
+**Windows (cmd):**
+```
+build.bat
+java -cp out serp.app.SearchApp                                   REM the GUI
+java -cp out serp.app.Main --online "crime reporting" "crime mapping"
+```
+The GUI needs a desktop display; `--online` needs internet access to reach the sources.
 
-**Offline by default.** `OfflineSearchClient` serves a small built-in corpus of realistic
-crime-reporting abstracts with *simulated* latency, so the whole pipeline (and the
-benchmarks) runs and is reproducible with no network. The live client exercises the exact
-same downstream code.
+## Sources
 
----
+`online` queries four keyless public APIs concurrently and merges them:
 
-## Architecture (layered, each layer swappable)
+- **arXiv** (Atom XML)
+- **OpenAlex** (JSON; abstracts stored as an inverted index, reconstructed on the fly)
+- **Semantic Scholar** (JSON; rate-limited without a key — throttling is isolated)
+- **CrossRef** (JSON; JATS-XML abstracts are tag-stripped)
+
+Results are de-duplicated across sources by normalised title; a paper found by more
+sources, or ranked higher within a source, sorts higher. `offline` uses a built-in
+16-paper corpus so the whole pipeline runs and is testable with no network.
+
+## Concurrency design (mapped to *Java Concurrency in Practice*)
+
+Three levels of parallelism, one shared bounded work pool:
+
+1. **Two topics at once.** In the GUI, each topic runs in its own `SwingWorker`; the
+   console `mineBoth` runs each on its own thread in a size-2 coordinator pool.
+2. **Sources per topic.** `MultiSourceSearchClient` submits one task per source and
+   collects them with an `ExecutorCompletionService`, so slow sources don't hold up fast
+   ones (Ch.6).
+3. **Papers per topic.** Feature extraction is fanned out the same way, tallying into a
+   `ConcurrentHashMap<Feature, LongAdder>` (Ch.5, 11).
+
+Key JCiP points, applied concretely:
+
+- **Immutable, safely-published state** (`Paper`, `Feature`, `TopicResult`) is read by
+  many threads with no locks — the same principle that made `Board` lock-free in the Ayo
+  project (Ch.3, 16).
+- **Thread confinement / EDT discipline.** All Swing state is touched only on the Event
+  Dispatch Thread; background work happens in `SwingWorker`, and finished immutable
+  `TopicResult`s are published to the EDT for rendering (Ch.9).
+- **No thread-starvation deadlock (8.1.1).** Only *coordinator* threads (SwingWorker
+  background threads, or the size-2 coordinator pool) ever block waiting for results. The
+  shared *work* pool runs only leaf tasks (one fetch, one extraction) that never wait on
+  the pool — so tasks can't deadlock waiting for a thread the pool can't spare.
+- **Bounded resources.** A shared `Semaphore` caps in-flight HTTP requests across all
+  sources and both topics, keeping us a polite client (5.5.3). `poll` timeouts bound how
+  long we wait on any one source or paper (Ch.7).
+- **Failure isolation.** A failing source (rate limit, network) or a failing topic is
+  caught and reported without sinking the rest of the run.
+- **Pool sizing, justified empirically.** `serp.bench.Benchmark` sweeps the pool size
+  against 8 simulated 200 ms sources; speedup climbs ~linearly until the pool reaches the
+  number of sources, then flattens — the JCiP 8.2 I/O formula in action.
+
+## Layout
 
 ```
-serp.model    Paper, Feature, PaperFeatures        immutable value layer (records/enum)
-serp.search   SearchClient  ── ArxivSearchClient    the SERP source (task, not policy)
-                            └─ OfflineSearchClient
-serp.extract  FeatureExtractor                       lexicon matching (stateless/shared)
-serp.mine     FeatureMiner, MiningConfig/Result      the concurrency engine  ← core
-serp.viz      ConsoleReport, BarChartPanel, ChartWindow   visualisation
-serp.app      Main                                   CLI wiring
-serp.bench    Benchmark                               empirical pool-sizing
-test/serp     4 smoke tests
+src/serp/
+  model/    Paper, Feature (15-feature crime-reporting lexicon), PaperFeatures  (immutable)
+  json/     Json                      minimal dependency-free JSON parser
+  net/      Http                      shared GET helper (timeouts, polite UA)
+  search/   SearchClient + ArxivSearchClient, OpenAlexSearchClient,
+            SemanticScholarSearchClient, CrossRefSearchClient, OfflineSearchClient,
+            MultiSourceSearchClient (concurrent fan-out + merge), Sources
+  extract/  FeatureExtractor          keyword/inflection matching with word boundaries
+  mine/     SearchService (engine), TopicResult, FeatureCount, MiningConfig
+  viz/      SearchFrame, ResultsView (4 tabs), PapersPanel, BarChartPanel, ConsoleReport
+  app/      SearchApp (GUI entry), Main (console entry)
+  bench/    Benchmark
+test/serp/test/
+  ModelSmokeTest, ExtractionSmokeTest, SearchSmokeTest,
+  JsonSmokeTest, SourceMappingSmokeTest, ParallelSmokeTest      (175 checks)
 ```
 
-The `SearchClient` interface is the seam that keeps the **task** (fetch a page of
-results) separate from the **execution policy** (how many run at once) — the discipline
-that lets the same engine drive a live web backend or an in-memory one unchanged.
+## What was verified where
 
----
+Compiles clean on JDK 21; all six smoke suites pass (175 checks); the console two-topic
+pipeline and the benchmark run headless. The **GUI** and the **live APIs** were not
+exercised in the build sandbox (no display; outbound network blocked) — run those on your
+own machine. The source-mapping test covers each API's parsing against embedded sample
+responses, so a well-formed response is proven to map correctly even though the live
+endpoints weren't hit from here.
 
-## How it maps to *Java Concurrency in Practice* (Goetz)
+## Assumptions
 
-| Design decision | JCiP concept |
-|---|---|
-| `Paper`, `PaperFeatures` are immutable records; one shared `FeatureExtractor` | Ch.3 immutability, 3.4/4.3.1 safe sharing, Ch.16 safe publication |
-| Each query / each paper is a `Callable` submitted to one `ExecutorService` | Ch.6 task vs. execution policy |
-| Both stages consume results via `ExecutorCompletionService` | 6.3.5 completion-order results |
-| `Semaphore` bounds concurrent backend requests (politeness) | 5.5.3 bounded resource |
-| Feature tally is a `ConcurrentHashMap<Feature, LongAdder>` updated by workers | Ch.5 concurrent collections; lock-free counting |
-| Per-completion `poll(timeout)`; `Future.get` surfaces per-task failure | Ch.7 timed tasks, cancellation |
-| `finally` shutdown with `awaitTermination` → `shutdownNow` fallback; interrupts restored | Ch.7 clean shutdown, 7.1.2 interruption policy |
-| Pool size from the I/O formula `N = N_cpu · U · (1 + W/C)`, capped at #queries | 8.2 sizing thread pools |
-| UI reads only a finished immutable `MiningResult` on the EDT | Ch.9 Swing single-thread rule |
-
-**A subtle interaction worth noting for the write-up:** with the default polite
-semaphore (4 permits) but 8 queries, the speedup flattens at 4× even with 8 threads —
-because the *semaphore*, not the pool, becomes the binding constraint. The benchmark
-lifts the semaphore to isolate pure pool scaling; the app keeps it low to stay polite.
-That two-limits interplay (5.5.3 meeting 8.2) is a genuine concurrency lesson, not a bug.
-
----
-
-## Empirical pool sizing
-
-`./run.sh bench` sweeps pool sizes against the offline pipeline (200 ms simulated
-per-query latency, 8 queries). Representative run:
-
-```
-pool   total(ms)   speedup
-1      1626        1.00x
-2       808        2.01x
-4       410        3.97x
-8       207        7.86x
-16      211        7.71x
-32      211        7.71x
-```
-
-The curve is textbook I/O-bound scaling: time falls almost linearly until the pool
-reaches the number of independent tasks (8 queries), then flattens — more threads than
-tasks buys nothing. This holds even on a 1-CPU machine because the work is *waiting on
-I/O*, not computing, which is exactly why the JCiP formula recommends **many more
-threads than cores** for this workload.
-
----
-
-## Correctness of the concurrency
-
-`ParallelSmokeTest` is the key check: it runs the miner at pool sizes 1, 2, 4, 8, 16 and
-asserts the feature counts are **identical every time** and match a single-threaded
-reference computed with no executor. If the shared-map aggregation had a lost-update or
-visibility race, the counts would drift as threads were added; they don't.
+- One paper = one "system" for the counting rule.
+- Both topics are visualised with the same crime-reporting feature lexicon. The extractor
+  is injected into the engine, so a different lexicon per topic (e.g. for a second
+  assignment part) is a one-line change.
