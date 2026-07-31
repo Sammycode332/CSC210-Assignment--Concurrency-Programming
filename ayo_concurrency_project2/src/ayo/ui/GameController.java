@@ -56,8 +56,8 @@ public final class GameController implements BoardView.PitListener {
     // step, long relays skip through several steps per frame.
     private boolean animate = true;
     private static final int MAX_FRAMES = 36;
-    private static final int MAX_MOVE_MILLIS = 4000;
-    private static final int MIN_FRAME_MILLIS = 500;
+    private static final int MAX_MOVE_MILLIS = 2000;
+    private static final int MIN_FRAME_MILLIS = 200;
     private static final int MAX_FRAME_MILLIS = 400;
 
     private Board board = Board.initial();
