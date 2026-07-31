@@ -6,7 +6,6 @@ import javax.swing.*;
 import java.awt.*;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Random;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -15,7 +14,8 @@ import java.util.concurrent.Executors;
  * describes in §4.2.2 / §4.3.1, side by side, for all three trackers:
  *
  *   - Several "updater" threads (background workers) continuously write
- *     new vehicle positions, simulating GPS pings.
+ *     new vehicle positions, simulating GPS pings, driving each vehicle
+ *     along the campus road loop (see Campus).
  *   - A Swing Timer repaints the panel roughly 30 times/sec — this plays
  *     the role of the "view thread" that reads positions to render them.
  *
@@ -31,7 +31,8 @@ import java.util.concurrent.Executors;
  * In both safe modes, motion is always correct no matter the load. In
  * UNSAFE mode, watch the on-screen race counter — every "torn read" (an
  * inconsistent x,y pair briefly visible mid-update) is caught and flagged
- * live, right where the lecturer can see it happen.
+ * live: a valid vehicle position always sits on the road, so a torn
+ * (new-x, old-y) pair lands off the road and is drawn red.
  */
 public class FleetTrackerGUI extends JFrame {
 
@@ -114,7 +115,7 @@ public class FleetTrackerGUI extends JFrame {
                 break;
             default:
                 text = "  UnsafeVehicleTracker — plain HashMap, live map exposed, unsynchronized x/y "
-                        + "writes.  Torn reads detected: " + raceCount;
+                        + "writes.  Off-road (torn) reads detected: " + raceCount;
         }
         statusLabel.setText(text);
     }
@@ -130,36 +131,28 @@ public class FleetTrackerGUI extends JFrame {
         }
     }
 
-    // How far a vehicle can move in a single update (small step = looks
-    // like driving; NOT a teleport to a random spot on the map).
-    private static final int MAX_STEP = 25;
-    // How often each vehicle gets a new position. Slower = calmer, easier
-    // to watch and narrate; still plenty fast to demonstrate concurrency.
+    // How often each vehicle advances to the next point on the road. Slower =
+    // calmer, easier to watch and narrate; still plenty fast for the demo.
     private static final long UPDATE_INTERVAL_MS = 200;
-
-    private static int clamp(int v) {
-        return Math.max(0, Math.min(WORLD_SIZE, v));
-    }
-
-    private static int step(int current, Random rnd) {
-        return clamp(current + rnd.nextInt(2 * MAX_STEP + 1) - MAX_STEP);
-    }
 
     private void startMonitorMode() {
         Map<String, MutablePoint> initial = new HashMap<>();
-        for (String id : VEHICLE_IDS) initial.put(id, new MutablePoint()); // MutablePoint() starts at (0,0)
-        // Spread starting positions out instead of stacking all 4 at the corner.
-        int i = 0;
-        for (String id : VEHICLE_IDS) initial.get(id).x = initial.get(id).y = 150 + i++ * 200;
+        for (int v = 0; v < VEHICLE_IDS.length; v++) {
+            MutablePoint p = new MutablePoint();
+            p.x = Campus.startX(v);
+            p.y = Campus.startY(v);
+            initial.put(VEHICLE_IDS[v], p);
+        }
         monitorTracker = new MonitorVehicleTracker(initial);
 
         updaterPool = Executors.newFixedThreadPool(VEHICLE_IDS.length);
-        Random rnd = new Random();
-        for (String id : VEHICLE_IDS) {
+        for (int v = 0; v < VEHICLE_IDS.length; v++) {
+            String id = VEHICLE_IDS[v];
+            int[] idx = { Campus.startIndex(v) };
             updaterPool.submit(() -> {
                 while (!Thread.currentThread().isInterrupted()) {
-                    MutablePoint cur = monitorTracker.getLocation(id);
-                    monitorTracker.setLocation(id, step(cur.x, rnd), step(cur.y, rnd));
+                    idx[0] = Campus.next(idx[0]);
+                    monitorTracker.setLocation(id, Campus.routeX(idx[0]), Campus.routeY(idx[0]));
                     sleepQuietly(UPDATE_INTERVAL_MS);
                 }
             });
@@ -168,17 +161,18 @@ public class FleetTrackerGUI extends JFrame {
 
     private void startDelegatingMode() {
         Map<String, SafePoint> initial = new HashMap<>();
-        int i = 0;
-        for (String id : VEHICLE_IDS) initial.put(id, new SafePoint(150 + i++ * 200, 150 + (i - 1) * 200));
+        for (int v = 0; v < VEHICLE_IDS.length; v++)
+            initial.put(VEHICLE_IDS[v], new SafePoint(Campus.startX(v), Campus.startY(v)));
         delegatingTracker = new DelegatingVehicleTracker(initial);
 
         updaterPool = Executors.newFixedThreadPool(VEHICLE_IDS.length);
-        Random rnd = new Random();
-        for (String id : VEHICLE_IDS) {
+        for (int v = 0; v < VEHICLE_IDS.length; v++) {
+            String id = VEHICLE_IDS[v];
+            int[] idx = { Campus.startIndex(v) };
             updaterPool.submit(() -> {
                 while (!Thread.currentThread().isInterrupted()) {
-                    int[] cur = delegatingTracker.getLocation(id).get();
-                    delegatingTracker.setLocation(id, step(cur[0], rnd), step(cur[1], rnd));
+                    idx[0] = Campus.next(idx[0]);
+                    delegatingTracker.setLocation(id, Campus.routeX(idx[0]), Campus.routeY(idx[0]));
                     sleepQuietly(UPDATE_INTERVAL_MS);
                 }
             });
@@ -187,23 +181,19 @@ public class FleetTrackerGUI extends JFrame {
 
     private void startUnsafeMode() {
         unsafeTracker = new UnsafeVehicleTracker();
-        int i = 0;
-        for (String id : VEHICLE_IDS) {
-            int start = 150 + i++ * 200;
-            unsafeTracker.addVehicle(id, start, start); // x == y invariant, on purpose
-        }
+        for (int v = 0; v < VEHICLE_IDS.length; v++)
+            unsafeTracker.addVehicle(VEHICLE_IDS[v], Campus.startX(v), Campus.startY(v));
 
         updaterPool = Executors.newFixedThreadPool(VEHICLE_IDS.length);
-        Random rnd = new Random();
-        for (String id : VEHICLE_IDS) {
+        for (int v = 0; v < VEHICLE_IDS.length; v++) {
+            String id = VEHICLE_IDS[v];
+            int[] idx = { Campus.startIndex(v) };
             updaterPool.submit(() -> {
                 while (!Thread.currentThread().isInterrupted()) {
-                    // Deliberately keep x == y so the panel can detect a
-                    // torn read: any moment where x != y proves the
-                    // painter caught this object mid-update.
-                    MutablePoint cur = unsafeTracker.getLocations().get(id);
-                    int n = step(cur.x, rnd);
-                    unsafeTracker.setLocation(id, n, n);
+                    idx[0] = Campus.next(idx[0]);
+                    // The tracker writes x then y non-atomically, so a reader can still
+                    // catch a torn (new-x, old-y) pair — which now lands OFF the road.
+                    unsafeTracker.setLocation(id, Campus.routeX(idx[0]), Campus.routeY(idx[0]));
                     sleepQuietly(UPDATE_INTERVAL_MS);
                 }
             });
@@ -225,6 +215,7 @@ public class FleetTrackerGUI extends JFrame {
     // ---------- The "view": paints whichever tracker is currently active ----------
 
     private class TrackPanel extends JPanel {
+        private final OsmMap map = new OsmMap(this::repaint);
         TrackPanel() {
             setBackground(Color.WHITE);
         }
@@ -236,6 +227,8 @@ public class FleetTrackerGUI extends JFrame {
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
             int w = getWidth(), h = getHeight();
+
+            map.paint(g2, w, h);   // live OpenStreetMap backdrop, drawn before the vehicles
 
             switch (mode) {
                 case MONITOR -> paintMonitor(g2, w, h);
@@ -277,7 +270,7 @@ public class FleetTrackerGUI extends JFrame {
                 MutablePoint p = live.get(id);
                 if (p != null) {
                     int x = p.x, y = p.y; // two separate, unsynchronized reads
-                    boolean torn = (x != y);
+                    boolean torn = !Campus.isOnRoute(x, y); // a valid position is always on the road
                     if (torn) raceCount++;
                     drawVehicle(g2, id, x, y, w, h, COLORS[i % COLORS.length], torn);
                 }

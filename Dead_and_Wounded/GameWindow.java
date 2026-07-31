@@ -119,7 +119,7 @@ public class GameWindow extends JFrame {
 
         result.setText(answer);
 
-        historyModel.insertRow(0, new Object[] {guess, answer});   // newest on top
+        historyModel.insertw(0, new Object[] {guess, answer});   // newest on top
 
         logger.log(guess, answer);
 
