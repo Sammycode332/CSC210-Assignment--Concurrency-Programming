@@ -1,7 +1,0 @@
-test/serp/test/Check.java
-test/serp/test/ExtractionSmokeTest.java
-test/serp/test/JsonSmokeTest.java
-test/serp/test/ModelSmokeTest.java
-test/serp/test/ParallelSmokeTest.java
-test/serp/test/SearchSmokeTest.java
-test/serp/test/SourceMappingSmokeTest.java
